@@ -1,0 +1,8 @@
+StanfordPackage/
+samsum/
+myDataset/
+logs/
+data/
+checkpoints/
+.vscode/
+src/__pycache__/

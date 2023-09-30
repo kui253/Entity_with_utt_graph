@@ -1,0 +1,45 @@
+hyperparam:
+  use_wandb: True
+  train_log_dir: "../logs/"
+  input_dir: "./data/"
+  models_ckpt_dir: "/data2/trace/common_param/"
+  use_wandb: True
+  train_batch_size: 4
+  val_batch_size: 1
+  n_workers: 4
+  seed: 42
+  max_seq_len: 512
+  max_utt_len: 64
+  max_sum_len: 128
+  dropout: 0.3
+  checkpoint_dir: "../checkpoints/"
+  test_checkpoint_dir: "../checkpoints/"
+  train_epochs: 16
+  gradient_accumulation_step: 1
+  evaluate_n_times_per_epoch: 2
+  max_grad_norm: 100
+  config_name: 'ConfigBartBase'
+  label_pad_id: -100
+
+optimizer:
+  optimizer_type: "AdamW"
+  eps: 0.000001
+  weight_decay: 0.01
+  lr: 0.00001
+
+scheduler:
+  scheduler_type: "linear_schedule_with_warmup"
+  warmup_steps: 0
+  is_warmup: True
+
+model:
+  model_type: "gtbart" #['baseline', 'gtbart']
+  backbone_type: "bart-base"
+
+dataset:
+  train_dataset_name: "samsum_train.pkl"
+  val_dataset_name: "samsum_validation.pkl"
+  test_dataset_name: "samsum_test.pkl"
+
+criterion:
+  criterion_type: "crossEntropy"
