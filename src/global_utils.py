@@ -56,8 +56,7 @@ def init_wandb(cfg):
         # track hyperparameters and run metadata
         config={
             "learning_rate": cfg.optimizer.lr,
-            "architecture": cfg.model.backbone_type + "-" + cfg.model.pooling_type,
-            "dataset": cfg.dataset.dataset_type,
+            "architecture": cfg.model.backbone_type,
             "epochs": cfg.hyperparam.train_epochs,
         },
         name=cfg.hyperparam.config_name + res,
@@ -78,3 +77,22 @@ def init_logger(cfg):
             time.localtime().tm_min,
         ),
     )
+
+
+def get_rouge_score(hyps, refs):
+    import rouge
+
+    evaluator = rouge.Rouge(
+        metrics=["rouge-n", "rouge-l"],
+        max_n=2,
+        limit_length=True,
+        length_limit=100,
+        length_limit_type="words",
+        apply_avg=True,
+        apply_best=False,
+        alpha=0.5,  # Default F1_score
+        weight_factor=1.2,
+        stemming=True,
+    )
+    py_rouge_scores = evaluator.get_scores(hyps, refs)
+    return py_rouge_scores

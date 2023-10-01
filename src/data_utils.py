@@ -164,7 +164,7 @@ def get_dataloader(cfg, collate_fn, mode="train"):
     return dataloader
 
 
-def collate_fn(batch):  # 支持batch操作
+def gtbart_collate_fn(batch):  # 支持batch操作
     max_utt_num = max([item["utts_nums"] for item in batch])
     max_single_utt_num = max(
         [len(utt) for item in batch for utt in item["gt_input_ids"]]
@@ -198,10 +198,25 @@ def collate_fn(batch):  # 支持batch操作
     batched_features["gt_attention_ids"] = torch.cat(
         [torch.tensor(x["gt_attention_mask"]) for x in batch], dim=0
     )
-    batched_features["batch_utt_lens"] = batch_utt_lens
+    batched_features["batch_utt_lens"] = torch.tensor(batch_utt_lens)
     batched_features["uttts_ents_mat"] = torch.cat(utts_ents_mat, dim=0).view(
         -1, max_utt_num, max_ent_num
     )  # batch * max_utt_num * max_ent_num
+    batched_features["input_ids"] = torch.cat([x["input_ids"] for x in batch], dim=0)
+    batched_features["attention_mask"] = torch.cat(
+        [x["attention_mask"] for x in batch], dim=0
+    )
+    batched_features["decoder_input_ids"] = torch.cat(
+        [x["target_input_ids"] for x in batch], dim=0
+    )
+    batched_features["decoder_attention_mask"] = torch.cat(
+        [x["target_attention_ids"] for x in batch], dim=0
+    )
+    return batched_features
+
+
+def baseline_collate_fn(batch):
+    batched_features = {}
     batched_features["input_ids"] = torch.cat([x["input_ids"] for x in batch], dim=0)
     batched_features["attention_mask"] = torch.cat(
         [x["attention_mask"] for x in batch], dim=0
@@ -221,10 +236,13 @@ if __name__ == "__main__":
     # rawdataset_processing(dataset=dataset, mode="validation")
     # rawdataset_processing(dataset=dataset, mode="test")
     cfg = get_config("./config/ConfigBartBase.yml")
-    train_dl = get_dataloader(cfg, collate_fn, mode="train")
+    if cfg.model.model_type == "gtbart":
+        train_dl = get_dataloader(cfg, gtbart_collate_fn, mode="train")
+    else:
+        train_dl = get_dataloader(cfg, baseline_collate_fn, mode="train")
     # pl_dataset = plDataset(cfg, collate_fn)
     # train_dl = pl_dataset.train_dataloader()
     for i in train_dl:
         print(i)
         break
-    pass
+    # pass

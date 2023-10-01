@@ -6,3 +6,4 @@ data/
 checkpoints/
 .vscode/
 src/__pycache__/
+wandb/
