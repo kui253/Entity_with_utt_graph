@@ -10,7 +10,6 @@ class SamSumDataset(Dataset):
         self.cfg = cfg
 
     def __getitem__(self, index):
-        # 只能在batchsize = 1的情况下
         text_in = self.dia[index]["unit_utts"]
         summary = self.dia[index]["summary"]
         utts = self.dia[index]["utterances"]

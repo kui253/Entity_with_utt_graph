@@ -2,7 +2,7 @@ from datasets import load_dataset
 import spacy
 from tqdm import tqdm
 import re
-from transformers import AutoTokenizer
+from transformers import BartTokenizer
 import numpy as np
 import pickle
 from collections import OrderedDict
@@ -49,35 +49,41 @@ def rawdataset_processing(dataset, mode="train", resume=0):
         ]
         neat_utterances = " ".join(utterances_features["utterances"])
         utterances_features["unit_utts"] = " # ".join(utterances)
+        utterances_features["unit_utts_version2"] = " <sep> ".join(utterances)
         inline_entities = [
             {"label": str(en.label_), "text": str(en.text)}
             for en in nlp(neat_utterances).ents
         ]
-
+        # 句子中有多个实体的情况，只要一部分有效实体
         if len(inline_entities) > 1:
             merged_entities = {}
             for item in inline_entities:
-                if merged_entities.get(item["label"], None):
-                    merged_entities[item["label"]] += [item["text"]]
-                else:
-                    merged_entities[item["label"]] = [item["text"]]
+                if item["label"] in ["DATE", "TIME", "PERSON", "MONEY"]:
+                    if merged_entities.get(item["label"], None):
+                        merged_entities[item["label"]] += [item["text"]]
+                    else:
+                        merged_entities[item["label"]] = [item["text"]]
+
             result_data = {
                 label: " | ".join(values) for label, values in merged_entities.items()
             }
             has_person = result_data.get("PERSON", None)
+
             if has_person:
                 utterances_features["nameSetInorder"] = remove_duplicates(
                     utterances_features["nameSetInorder"] + [has_person]
                 )
+
             for label, value in result_data.items():
                 if label == "PERSON":
                     continue
-                temp_str += "{" + label + ": " + value + "} "
+                if label in ["DATE", "TIME", "PERCENT", "MONEY"]:
+                    temp_str += "{" + value + "} "
             entities = remove_duplicates(
                 utterances_features["nameSetInorder"]
                 + [ent[0] for ent in merged_entities.values()]
             )
-        elif len(inline_entities) == 1:
+        elif len(inline_entities) == 1:  # 句子中只有一个实体的情况
             label = inline_entities[0]["label"]
             value = inline_entities[0]["text"]
             entities = remove_duplicates(
@@ -87,17 +93,17 @@ def rawdataset_processing(dataset, mode="train", resume=0):
                 utterances_features["nameSetInorder"] = remove_duplicates(
                     utterances_features["nameSetInorder"] + [str(value)]
                 )
-            else:
-                temp_str += "{" + label + ": " + value + "} "
+            elif label in ["DATE", "TIME", "PERSON", "MONEY"]:
+                temp_str += "{" + value + "} "
         else:
             entities = utterances_features["nameSetInorder"]
         if temp_str == "":
             entities_chain = (
-                "{PERSON: " + " | ".join(utterances_features["nameSetInorder"]) + "} "
+                "{" + " | ".join(utterances_features["nameSetInorder"]) + "} "
             )
         else:
             entities_chain = (
-                "{PERSON: "
+                "{"
                 + " | ".join(utterances_features["nameSetInorder"])
                 + "} "
                 + temp_str
@@ -105,6 +111,7 @@ def rawdataset_processing(dataset, mode="train", resume=0):
         utterances_features["unit_utts"] = (
             entities_chain + " # " + utterances_features["unit_utts"]
         )
+
         map_mat = np.zeros((len(utterances), len(entities)))
         for id, utt in enumerate(utterances_features["utterances"]):
             map_mat[id, entities.index(utterances_features["names"][id])] = 1
@@ -140,7 +147,7 @@ def get_data(cfg, mode="train"):  # done
 def get_dataset(cfg, mode="train"):  # done
     processed_data = get_data(cfg, mode)
     path = os.path.join(cfg.hyperparam.models_ckpt_dir, cfg.model.backbone_type)
-    tokenizer = AutoTokenizer.from_pretrained(path)
+    tokenizer = BartTokenizer.from_pretrained(path)
     mydataset = SamSumDataset(dia=processed_data, tokenizer=tokenizer, cfg=cfg)
     return mydataset
 
@@ -157,7 +164,7 @@ def get_dataloader(cfg, collate_fn, mode="train"):
     dataloader = DataLoader(
         mydataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,  # for debug
         num_workers=cfg.hyperparam.n_workers,
         collate_fn=collate_fn,
     )
@@ -230,19 +237,19 @@ def baseline_collate_fn(batch):
     return batched_features
 
 
-# if __name__ == "__main__":
-#     # dataset = load_dataset("/data1/whd/diaResearch/DST_tag_method/samsum/samsum.py")
-#     # rawdataset_processing(dataset=dataset, mode="train")
-#     # rawdataset_processing(dataset=dataset, mode="validation")
-#     # rawdataset_processing(dataset=dataset, mode="test")
-#     cfg = get_config("./config/ConfigBartBase.yml")
-#     if cfg.model.model_type == "gtbart":
-#         train_dl = get_dataloader(cfg, gtbart_collate_fn, mode="train")
-#     else:
-#         train_dl = get_dataloader(cfg, baseline_collate_fn, mode="train")
-#     # pl_dataset = plDataset(cfg, collate_fn)
-#     # train_dl = pl_dataset.train_dataloader()
-#     for i in train_dl:
-#         print(i)
-#         break
-#     # pass
+if __name__ == "__main__":
+    dataset = load_dataset("/data1/whd/diaResearch/DST_tag_method/samsum/samsum.py")
+    rawdataset_processing(dataset=dataset, mode="train")
+    rawdataset_processing(dataset=dataset, mode="validation")
+    rawdataset_processing(dataset=dataset, mode="test")
+    # cfg = get_config("./config/ConfigBartBase.yml")
+    # if cfg.model.model_type == "gtbart":
+    #     train_dl = get_dataloader(cfg, gtbart_collate_fn, mode="validation")
+    # else:
+    #     train_dl = get_dataloader(cfg, baseline_collate_fn, mode="validation")
+    # # pl_dataset = plDataset(cfg, collate_fn)
+    # # train_dl = pl_dataset.train_dataloader()
+    # for i in train_dl:
+    #     print(i)
+    #     break
+    # # pass

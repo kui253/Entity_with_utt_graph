@@ -14,7 +14,7 @@ hyperparam:
   dropout: 0.3
   checkpoint_dir: "./checkpoints/"
   test_checkpoint_dir: "./checkpoints/"
-  train_epochs: 16
+  train_epochs: 4
   gradient_accumulation_step: 1
   evaluate_n_times_per_epoch: 2
   max_grad_norm: 100
@@ -26,7 +26,7 @@ hyperparam:
 optimizer:
   eps: 0.000001
   weight_decay: 0.01
-  lr: 0.00001
+  lr: 0.00002
 
 scheduler:
   scheduler_type: "linear_schedule_with_warmup"

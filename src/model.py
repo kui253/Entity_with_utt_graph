@@ -682,9 +682,12 @@ class baseBart(BartPretrainedModel):
 
 
 class TagBart(BartPretrainedModel):
+    base_model_prefix = "model"
+    _keys_to_ignore_on_load_missing = [r"final_logits_bias", r"lm_head\.weight"]
+
     def __init__(self, config: BartConfig, cfg):
-        super(TagBart, self).__init__(config)
-        self.model = baseBart(config, cfg)
+        super().__init__(config)
+        self.model = baseBart(config, cfg=cfg)
         self.register_buffer(
             "final_logits_bias", torch.zeros((1, self.model.shared.num_embeddings))
         )
@@ -694,12 +697,34 @@ class TagBart(BartPretrainedModel):
 
         self.init_weights()
 
-    # 是否需要
     def get_encoder(self):
         return self.model.get_encoder()
 
     def get_decoder(self):
         return self.model.get_decoder()
+
+    def resize_token_embeddings(self, new_num_tokens: int) -> nn.Embedding:
+        new_embeddings = super().resize_token_embeddings(new_num_tokens)
+        self._resize_final_logits_bias(new_num_tokens)
+        return new_embeddings
+
+    def _resize_final_logits_bias(self, new_num_tokens: int) -> None:
+        old_num_tokens = self.final_logits_bias.shape[-1]
+        if new_num_tokens <= old_num_tokens:
+            new_bias = self.final_logits_bias[:, :new_num_tokens]
+        else:
+            extra_bias = torch.zeros(
+                (1, new_num_tokens - old_num_tokens),
+                device=self.final_logits_bias.device,
+            )
+            new_bias = torch.cat([self.final_logits_bias, extra_bias], dim=1)
+        self.register_buffer("final_logits_bias", new_bias)
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
 
     def forward(
         self,
@@ -725,7 +750,7 @@ class TagBart(BartPretrainedModel):
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
-
+        # 然后再beam search 中调用模型的forward
         if labels is not None:
             if decoder_input_ids is None:
                 decoder_input_ids = shift_tokens_right(
@@ -777,9 +802,43 @@ class TagBart(BartPretrainedModel):
             encoder_attentions=outputs.encoder_attentions,
         )
 
+    # 下面这个函数在beam search的最开始的时候会调用
+    def prepare_inputs_for_generation(
+        self,
+        decoder_input_ids,
+        past=None,
+        attention_mask=None,
+        head_mask=None,
+        use_cache=None,
+        encoder_outputs=None,
+        **kwargs,
+    ):
+        # cut decoder_input_ids if past is used #
+        if past is not None:
+            decoder_input_ids = decoder_input_ids[:, -1:]
+
+        if kwargs.get("labels", None) != None:
+            kwargs.pop("labels")
+
+        return {
+            "input_ids": None,  # encoder_outputs is defined. input_ids not needed
+            "encoder_outputs": encoder_outputs,
+            "past_key_values": past,
+            "decoder_input_ids": decoder_input_ids,
+            "attention_mask": attention_mask,
+            "head_mask": head_mask,
+            "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
+            **kwargs,
+        }
+
+    def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
+        return shift_tokens_right(
+            labels, self.config.pad_token_id, self.config.decoder_start_token_id
+        )
+
     @staticmethod
-    def _reorder_cache(past, beam_idx):
-        reordered_past = ()
+    def _reorder_cache(past, beam_idx):  # 然后再modelforward之后调用这个函数
+        reordered_past = ()  # 这里的beam_idx使用的是选择的beam的id
         for layer_past in past:
             # cached cross_attention states don't have to be reordered -> they are always the same
             reordered_past += (
@@ -791,12 +850,14 @@ class TagBart(BartPretrainedModel):
             )
         return reordered_past
 
+    # for beam_search
+
     @staticmethod
-    def _expand_inputs_for_generation(  # TODO
-        input_ids,
-        expand_size: int = 1,
+    def _expand_inputs_for_generation(  # generate step 2 在初始化beam_scorer之后
+        input_ids,  # 此时的input_ids变成了之前预备需要输入的那个batchsize 个0
+        expand_size: int = 1,  # 这个是5 应该是beam_num
         is_encoder_decoder: bool = False,
-        attention_mask: torch.LongTensor = None,
+        attention_mask: torch.LongTensor = None,  # 这个attention_mask还是之前的那个
         encoder_outputs: DualBaseModelOutput = None,
         **model_kwargs,
     ) -> Tuple[torch.LongTensor, Dict[str, Any]]:
@@ -806,8 +867,8 @@ class TagBart(BartPretrainedModel):
             .repeat(1, expand_size)
             .view(-1)
             .to(input_ids.device)
-        )
-        input_ids = input_ids.index_select(0, expanded_return_idx)
+        )  # 5 个beam 4个sample 每个samaple对应5个beam
+        input_ids = input_ids.index_select(0, expanded_return_idx)  #
         if "token_type_ids" in model_kwargs:
             token_type_ids = model_kwargs["token_type_ids"]
             model_kwargs["token_type_ids"] = token_type_ids.index_select(
@@ -826,7 +887,7 @@ class TagBart(BartPretrainedModel):
 
         # if 'special_tokens_mask' in model_kwargs.keys() is not None:
         #    model_kwargs['special_tokens_mask'] = model_kwargs['special_tokens_mask'].index_select(0,expanded_return_idx)
-
+        # 下面就是把能扩展的部分对应扩展到对应份数
         if is_encoder_decoder:
             assert encoder_outputs is not None
             device = encoder_outputs[0].device
@@ -854,45 +915,41 @@ class TagBart(BartPretrainedModel):
             model_kwargs["encoder_outputs"] = encoder_outputs
         return input_ids, model_kwargs
 
-    # def prepare_inputs_for_generation(
-    #     self,
-    #     decoder_input_ids,
-    #     past=None,
-    #     attention_mask=None,
-    #     head_mask=None,
-    #     use_cache=None,
-    #     encoder_outputs=None,
-    #     **kwargs,
-    # ):
-    #     # cut decoder_input_ids if past is used
-    #     if past is not None:
-    #         decoder_input_ids = decoder_input_ids[:, -1:]
+    def estimate_tokens(self, input_dict: Dict[str, Union[torch.Tensor, Any]]) -> int:
+        """
+        Helper function to estimate the total number of tokens from the model inputs.
 
-    #     if kwargs.get("labels", None) != None:
-    #         kwargs.pop("labels")
+        Args:
+            inputs (:obj:`dict`): The model inputs.
 
-    #     return {
-    #         "input_ids": None,  # encoder_outputs is defined. input_ids not needed
-    #         "encoder_outputs": encoder_outputs,
-    #         "past_key_values": past,
-    #         "decoder_input_ids": decoder_input_ids,
-    #         "attention_mask": attention_mask,
-    #         "head_mask": head_mask,
-    #         "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
-    #         **kwargs,
-    #     }
-
-    # def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
-    #     return shift_tokens_right(
-    #         labels, self.config.pad_token_id, self.config.decoder_start_token_id
-    #     )
+        Returns:
+            :obj:`int`: The total number of tokens.
+        """
+        token_inputs = [tensor for key, tensor in input_dict.items() if "input" in key]
+        if token_inputs:
+            ret = 0
+            for token_input in token_inputs:
+                if isinstance(token_input, list) and isinstance(
+                    token_input[0], torch.Tensor
+                ):
+                    ret += sum([_token_input.numel() for _token_input in token_input])
+                elif isinstance(token_input, torch.Tensor):
+                    ret += token_input.numel()
+            return ret
+        else:
+            warnings.warn(
+                "Could not estimate the number of tokens of the input, floating-point operations will not be computed"
+            )
+            return 0
 
     def _prepare_decoder_input_ids_for_generation(
         self,
         input_ids: torch.LongTensor,
         decoder_start_token_id: int = None,
         bos_token_id: int = None,
-    ) -> torch.LongTensor:
+    ) -> (
+        torch.LongTensor
+    ):  # 这里的input_ids 就是baseline的input# decoder_start_token_id & bos = 0
         decoder_start_token_id = self._get_decoder_start_token_id(
             decoder_start_token_id, bos_token_id
         )
@@ -907,6 +964,7 @@ class TagBart(BartPretrainedModel):
             * decoder_start_token_id
         )
         return decoder_input_ids
+        # 上面的这个函数就是只有进行一个初始化batch size个初始token
 
 
 class plModel(LightningModule):
@@ -984,13 +1042,13 @@ class plModel(LightningModule):
     def compute_metrics(self, eval_preds):
         preds, labels = eval_preds
         preds = preds.detach().cpu()
-        labels = preds.detach().cpu()
+        labels = labels.detach().cpu()
         if isinstance(preds, tuple):
             preds = preds[0]
         decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
-        if self.cfg.hyperparam.label_pad_id:
-            # Replace -100 in the labels as we can't decode them.
-            labels = np.where(labels != 1, labels, self.tokenizer.pad_token_id)
+        # if self.cfg.hyperparam.label_pad_id:
+        #     # Replace -100 in the labels as we can't decode them.
+        #     labels = np.where(labels != 1, labels, self.tokenizer.pad_token_id)
         decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
 
         # Some simple post-processing
