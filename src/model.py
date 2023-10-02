@@ -854,38 +854,38 @@ class TagBart(BartPretrainedModel):
             model_kwargs["encoder_outputs"] = encoder_outputs
         return input_ids, model_kwargs
 
-    def prepare_inputs_for_generation(
-        self,
-        decoder_input_ids,
-        past=None,
-        attention_mask=None,
-        head_mask=None,
-        use_cache=None,
-        encoder_outputs=None,
-        **kwargs,
-    ):
-        # cut decoder_input_ids if past is used
-        if past is not None:
-            decoder_input_ids = decoder_input_ids[:, -1:]
+    # def prepare_inputs_for_generation(
+    #     self,
+    #     decoder_input_ids,
+    #     past=None,
+    #     attention_mask=None,
+    #     head_mask=None,
+    #     use_cache=None,
+    #     encoder_outputs=None,
+    #     **kwargs,
+    # ):
+    #     # cut decoder_input_ids if past is used
+    #     if past is not None:
+    #         decoder_input_ids = decoder_input_ids[:, -1:]
 
-        if kwargs.get("labels", None) != None:
-            kwargs.pop("labels")
+    #     if kwargs.get("labels", None) != None:
+    #         kwargs.pop("labels")
 
-        return {
-            "input_ids": None,  # encoder_outputs is defined. input_ids not needed
-            "encoder_outputs": encoder_outputs,
-            "past_key_values": past,
-            "decoder_input_ids": decoder_input_ids,
-            "attention_mask": attention_mask,
-            "head_mask": head_mask,
-            "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
-            **kwargs,
-        }
+    #     return {
+    #         "input_ids": None,  # encoder_outputs is defined. input_ids not needed
+    #         "encoder_outputs": encoder_outputs,
+    #         "past_key_values": past,
+    #         "decoder_input_ids": decoder_input_ids,
+    #         "attention_mask": attention_mask,
+    #         "head_mask": head_mask,
+    #         "use_cache": use_cache,  # change this to avoid caching (presumably for debugging)
+    #         **kwargs,
+    #     }
 
-    def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
-        return shift_tokens_right(
-            labels, self.config.pad_token_id, self.config.decoder_start_token_id
-        )
+    # def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
+    #     return shift_tokens_right(
+    #         labels, self.config.pad_token_id, self.config.decoder_start_token_id
+    #     )
 
     def _prepare_decoder_input_ids_for_generation(
         self,
@@ -922,7 +922,8 @@ class plModel(LightningModule):
         return self.model(**inputs)
 
     def training_step(self, batch, batch_idx):
-        loss = self.shared_step(batch)
+        batch = self.shared_step(batch)
+        loss = self.model(**batch)[0]
         if self.cfg.hyperparam.use_wandb:
             wandb.log({"train_loss": loss})
         self.log("train_loss", loss, prog_bar=True)
@@ -934,13 +935,12 @@ class plModel(LightningModule):
 
     def validation_step(self, batch: dict, batch_idx):
         gen_kwargs = {
-            "max_length": self.model.config.max_length,
-            "min_length": self.model.config.min_length,
+            "max_length": 100,
+            "min_length": 5,
             "num_beams": self.cfg.hyperparam.num_beams,
             # "synced_gpus": True if is_deepspeed_zero3_enabled() else False,
         }
-        for k in batch.keys():
-            batch[k] = batch[k].to(self.device)
+        batch = self.shared_step(batch)
         if self.cfg.model.model_type == "baseline":
             generated_tokens = self.model.generate(
                 batch["input_ids"],
@@ -955,7 +955,7 @@ class plModel(LightningModule):
             generated_tokens = self._pad_tensors_to_max_len(
                 generated_tokens, gen_kwargs["max_length"]
             )
-        has_labels = batch.get("decoder_input_ids", None)
+        has_labels = batch.get("labels", None)
         with torch.no_grad():
             outputs = self.model(**batch)
             if has_labels is not None:
@@ -966,7 +966,7 @@ class plModel(LightningModule):
                 )
             else:
                 loss = None
-        labels = batch["decoder_input_ids"]
+        labels = batch["labels"]
         if labels.shape[-1] < gen_kwargs["max_length"]:
             labels = self._pad_tensors_to_max_len(labels, gen_kwargs["max_length"])
 
@@ -983,12 +983,14 @@ class plModel(LightningModule):
 
     def compute_metrics(self, eval_preds):
         preds, labels = eval_preds
+        preds = preds.detach().cpu()
+        labels = preds.detach().cpu()
         if isinstance(preds, tuple):
             preds = preds[0]
         decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
         if self.cfg.hyperparam.label_pad_id:
             # Replace -100 in the labels as we can't decode them.
-            labels = np.where(labels != -100, labels, self.tokenizer.pad_token_id)
+            labels = np.where(labels != 1, labels, self.tokenizer.pad_token_id)
         decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
 
         # Some simple post-processing
@@ -1034,9 +1036,10 @@ class plModel(LightningModule):
         return padded_tensor
 
     def shared_step(self, batch):
-        batch = tuple(t.to(self.device) for t in batch)
-        loss = self.model(**batch)[0]
-        return loss
+        batch["labels"] = batch["decoder_input_ids"]
+        for k in batch.keys():
+            batch[k] = batch[k].to(self.device)
+        return batch
 
     def configure_optimizers(self):
         steps = (

@@ -230,19 +230,19 @@ def baseline_collate_fn(batch):
     return batched_features
 
 
-if __name__ == "__main__":
-    # dataset = load_dataset("/data1/whd/diaResearch/DST_tag_method/samsum/samsum.py")
-    # rawdataset_processing(dataset=dataset, mode="train")
-    # rawdataset_processing(dataset=dataset, mode="validation")
-    # rawdataset_processing(dataset=dataset, mode="test")
-    cfg = get_config("./config/ConfigBartBase.yml")
-    if cfg.model.model_type == "gtbart":
-        train_dl = get_dataloader(cfg, gtbart_collate_fn, mode="train")
-    else:
-        train_dl = get_dataloader(cfg, baseline_collate_fn, mode="train")
-    # pl_dataset = plDataset(cfg, collate_fn)
-    # train_dl = pl_dataset.train_dataloader()
-    for i in train_dl:
-        print(i)
-        break
-    # pass
+# if __name__ == "__main__":
+#     # dataset = load_dataset("/data1/whd/diaResearch/DST_tag_method/samsum/samsum.py")
+#     # rawdataset_processing(dataset=dataset, mode="train")
+#     # rawdataset_processing(dataset=dataset, mode="validation")
+#     # rawdataset_processing(dataset=dataset, mode="test")
+#     cfg = get_config("./config/ConfigBartBase.yml")
+#     if cfg.model.model_type == "gtbart":
+#         train_dl = get_dataloader(cfg, gtbart_collate_fn, mode="train")
+#     else:
+#         train_dl = get_dataloader(cfg, baseline_collate_fn, mode="train")
+#     # pl_dataset = plDataset(cfg, collate_fn)
+#     # train_dl = pl_dataset.train_dataloader()
+#     for i in train_dl:
+#         print(i)
+#         break
+#     # pass
